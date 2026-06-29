@@ -1,7 +1,6 @@
 package claude
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -29,13 +28,30 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 	// Ensure every tool has input_schema present.
 	// Some proxies (e.g. Vertex AI via Langdock) strictly require input_schema
 	// to be an object on every tool; Anthropic's own API is lenient about omitting it.
+	//
+	// After JSON unmarshal, Tools is []interface{} where each element is
+	// map[string]interface{} — type assertions to *dto.Tool won't match.
+	// We must patch at the raw map level before re-serialization.
 	if request.Tools != nil {
-		tools := request.GetTools()
-		for _, t := range tools {
-			if tool, ok := t.(*dto.Tool); ok && tool.InputSchema == nil {
-				tool.InputSchema = map[string]interface{}{"type": "object", "properties": json.RawMessage(`{}`)}
+		rawTools := request.GetTools()
+		patched := make([]any, 0, len(rawTools))
+		for _, t := range rawTools {
+			switch tool := t.(type) {
+			case map[string]interface{}:
+				if _, hasSchema := tool["input_schema"]; !hasSchema {
+					tool["input_schema"] = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+				}
+				patched = append(patched, tool)
+			case *dto.Tool:
+				if tool.InputSchema == nil {
+					tool.InputSchema = map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}
+				}
+				patched = append(patched, tool)
+			default:
+				patched = append(patched, t)
 			}
 		}
+		request.Tools = patched
 	}
 	return request, nil
 }
