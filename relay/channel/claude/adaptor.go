@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,17 @@ func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dt
 }
 
 func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.ClaudeRequest) (any, error) {
+	// Ensure every tool has input_schema present.
+	// Some proxies (e.g. Vertex AI via Langdock) strictly require input_schema
+	// to be an object on every tool; Anthropic's own API is lenient about omitting it.
+	if request.Tools != nil {
+		tools := request.GetTools()
+		for _, t := range tools {
+			if tool, ok := t.(*dto.Tool); ok && tool.InputSchema == nil {
+				tool.InputSchema = map[string]interface{}{"type": "object", "properties": json.RawMessage(`{}`)}
+			}
+		}
+	}
 	return request, nil
 }
 
